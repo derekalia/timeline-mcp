@@ -1,0 +1,17 @@
+{
+  "name": "timeline-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for managing Posty timeline - scheduled events and automations",
+  "type": "module",
+  "main": "timeline-fastmcp.ts",
+  "scripts": {
+    "start": "node --experimental-strip-types --experimental-transform-types timeline-fastmcp.ts"
+  },
+  "dependencies": {
+    "fastmcp": "^3.5.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.25.67",
+    "drizzle-orm": "^0.29.3",
+    "pg": "^8.11.3"
+  }
+}

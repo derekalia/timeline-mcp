@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Compiled JavaScript files
+*.js
+*.js.map
+
+# TypeScript declaration files
+*.d.ts
+*.d.ts.map
+
+# Keep the build script
+!build.sh
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
