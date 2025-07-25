@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Client } from 'pg';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { tracks, events } from './schema.ts';
+import { tracks, events } from './schema-sqlite.ts';
 import {
   platformSchema,
   agentSchema,
@@ -19,37 +19,50 @@ import {
   type Content
 } from './schemas/validation.ts';
 
-// Get workspace configuration
-async function getWorkspaceConfig() {
-  const workspacePath = process.env.POSTY_WORKSPACE || '/Users/derekalia/Documents/Posty Workspace';
-  const configPath = path.join(workspacePath, '.posty', 'config.json');
-  
-  try {
-    const content = await fs.readFile(configPath, 'utf-8');
-    return JSON.parse(content);
-  } catch (error) {
-    throw new Error('Failed to load workspace config: ' + error);
-  }
+// Get workspace path
+function getWorkspacePath() {
+  return process.env.POSTY_WORKSPACE || '/Users/derekalia/Documents/Posty Workspace';
+}
+
+// Get SQLite database path
+function getDbPath() {
+  const workspacePath = getWorkspacePath();
+  return path.join(workspacePath, '.posty', 'workspace.db');
 }
 
 // Database connection singleton
 let dbInstance: ReturnType<typeof drizzle> | null = null;
-let pgClient: Client | null = null;
+let sqliteDb: Database.Database | null = null;
 
 async function getDb() {
   if (!dbInstance) {
-    const config = await getWorkspaceConfig();
+    const dbPath = getDbPath();
+    console.error('[Timeline MCP] Database path:', dbPath);
     
-    pgClient = new Client({
-      host: 'localhost',
-      port: config.dbPort,
-      user: 'posty',
-      password: config.dbPassword,
-      database: 'posty'
-    });
+    // Ensure the directory exists
+    const dbDir = path.dirname(dbPath);
+    try {
+      await fs.access(dbDir);
+    } catch {
+      console.error('[Timeline MCP] Creating database directory:', dbDir);
+      await fs.mkdir(dbDir, { recursive: true });
+    }
     
-    await pgClient.connect();
-    dbInstance = drizzle(pgClient);
+    // Check if database file exists
+    try {
+      await fs.access(dbPath);
+    } catch {
+      console.error('[Timeline MCP] Database file does not exist at:', dbPath);
+    }
+    
+    try {
+      sqliteDb = new Database(dbPath);
+      dbInstance = drizzle(sqliteDb);
+      console.error('[Timeline MCP] Database connection established');
+    } catch (error) {
+      console.error('[Timeline MCP] Failed to connect to database:', error);
+      throw error;
+    }
   }
   
   return dbInstance;
@@ -88,12 +101,9 @@ const addScheduledEventParams = z.object({
   trackName: z.string().min(1, 'Track name cannot be empty').max(100, 'Track name too long'),
   eventName: z.string().min(1, 'Event name cannot be empty').max(200, 'Event name too long'),
   prompt: z.string().min(1, 'Prompt cannot be empty').max(5000, 'Prompt too long'),
-  scheduledTime: isoDateTimeSchema.refine(
-    (val) => new Date(val) > new Date(),
-    { message: 'Scheduled time must be in the future' }
-  ),
+  scheduledTime: isoDateTimeSchema,
   platform: platformSchema.default('x'),
-  agent: agentSchema
+  agent: agentSchema.optional().default('anthropic/claude-3-opus')
 });
 
 
@@ -103,11 +113,14 @@ mcp.addTool({
   description: 'Add a scheduled event to a track. IMPORTANT: 1) Use the terminal MCP tool to get the current date/time (execute_command("date")) before scheduling events to ensure correct dates. 2) Use timeline_list_tracks first to check if a track with the same name already exists before creating events.',
   parameters: addScheduledEventParams,
   execute: async (params) => {
+    console.error('[Timeline MCP] Add scheduled event called with params:', JSON.stringify(params, null, 2));
+    
     const db = await getDb();
     
     try {
       // Validate params
       const validatedParams = addScheduledEventParams.parse(params);
+      console.error('[Timeline MCP] Validated params:', JSON.stringify(validatedParams, null, 2));
       
       // Find or create track
       let track = await db.select().from(tracks)
@@ -122,11 +135,15 @@ mcp.addTool({
         
         const newOrder = (maxOrder[0]?.maxOrder || 0) + 1;
         
-        const [newTrack] = await db.insert(tracks).values({
+        const trackId = uuidv4();
+        await db.insert(tracks).values({
+          id: trackId,
           name: validatedParams.trackName,
           type: 'planned',
           order: newOrder
-        }).returning();
+        });
+        
+        const [newTrack] = await db.select().from(tracks).where(eq(tracks.id, trackId));
         
         track = [newTrack];
       }
@@ -144,20 +161,24 @@ mcp.addTool({
         attachments: []
       };
       
-      const [newEvent] = await db.insert(events).values({
+      const eventId = uuidv4();
+      await db.insert(events).values({
+        id: eventId,
         trackId: track[0].id,
         name: validatedParams.eventName,
         platform: validatedParams.platform,
-        scheduledTime: scheduledTime,
-        generationTime: generationTime,
-        content: content,
+        scheduledTime: scheduledTime.toISOString(),
+        generationTime: generationTime.toISOString(),
+        content: JSON.stringify(content),
         agent: validatedParams.agent,
         eventType: 'scheduled',
         mediaPath: mediaPath,
-        contentGenerated: false,
-        approved: false,
-        posted: false
-      }).returning();
+        contentGenerated: 0,
+        approved: 0,
+        posted: 0
+      });
+      
+      const [newEvent] = await db.select().from(events).where(eq(events.id, eventId));
       
       const response = {
         success: true,
@@ -165,22 +186,20 @@ mcp.addTool({
           id: newEvent.id,
           trackId: newEvent.trackId,
           name: newEvent.name,
-          scheduledTime: newEvent.scheduledTime.toISOString(),
-          generationTime: newEvent.generationTime?.toISOString(),
+          scheduledTime: newEvent.scheduledTime,
+          generationTime: newEvent.generationTime,
           mediaPath: newEvent.mediaPath,
           platform: newEvent.platform
         }
       };
       
-      // Trigger a manual notification since we're using a separate connection
-      // The PostgreSQL trigger will fire, but we need to ensure the app knows about it
+      // Log event creation
       console.log('[MCP Timeline] Event created:', newEvent.id, newEvent.name);
-      
-      // Small delay to ensure notifications propagate
-      await new Promise(resolve => setTimeout(resolve, 100));
       
       return JSON.stringify(response, null, 2);
     } catch (error) {
+      console.error('[Timeline MCP] Error in add_scheduled_event:', error);
+      
       if (error instanceof z.ZodError) {
         return JSON.stringify({
           success: false,
@@ -188,7 +207,12 @@ mcp.addTool({
           details: error.errors
         }, null, 2);
       }
-      throw error;
+      
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        stack: error instanceof Error ? error.stack : undefined
+      }, null, 2);
     }
   }
 });
@@ -203,30 +227,44 @@ mcp.addTool({
     offset: z.number().int().nonnegative().optional().default(0)
   }),
   execute: async (params) => {
-    const db = await getDb();
+    console.error('[Timeline MCP] List tracks called');
     
-    const results = await db.select().from(tracks)
-      .where(eq(tracks.type, 'planned'))
-      .orderBy(asc(tracks.order))
-      .limit(params.limit)
-      .offset(params.offset);
-    
-    const response = {
-      tracks: results.map(track => trackResponseSchema.parse({
-        id: track.id,
-        name: track.name,
-        type: 'schedule',
-        order: track.order,
-        createdAt: track.createdAt?.toISOString()
-      })),
-      pagination: {
-        limit: params.limit,
-        offset: params.offset,
-        total: results.length
-      }
-    };
-    
-    return JSON.stringify(response, null, 2);
+    try {
+      const db = await getDb();
+      
+      const results = await db.select().from(tracks)
+        .where(eq(tracks.type, 'planned'))
+        .orderBy(asc(tracks.order))
+        .limit(params.limit)
+        .offset(params.offset);
+      
+      console.error('[Timeline MCP] Found tracks:', results.length);
+      
+      const response = {
+        tracks: results.map(track => trackResponseSchema.parse({
+          id: track.id,
+          name: track.name,
+          type: 'schedule',
+          order: track.order,
+          createdAt: track.createdAt
+        })),
+        pagination: {
+          limit: params.limit,
+          offset: params.offset,
+          total: results.length
+        }
+      };
+      
+      return JSON.stringify(response, null, 2);
+    } catch (error) {
+      console.error('[Timeline MCP] Error in list_tracks:', error);
+      
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        stack: error instanceof Error ? error.stack : undefined
+      }, null, 2);
+    }
   }
 });
 
@@ -277,8 +315,8 @@ mcp.addTool({
       }
       
       // Date filters
-      if (params.startDate && event.scheduledTime < new Date(params.startDate)) return false;
-      if (params.endDate && event.scheduledTime > new Date(params.endDate)) return false;
+      if (params.startDate && new Date(event.scheduledTime) < new Date(params.startDate)) return false;
+      if (params.endDate && new Date(event.scheduledTime) > new Date(params.endDate)) return false;
       
       return true;
     });
@@ -289,11 +327,11 @@ mcp.addTool({
         trackId: event.trackId,
         trackName: track.name,
         name: event.name,
-        prompt: (event.content as Content).content,
+        prompt: (typeof event.content === 'string' ? JSON.parse(event.content) : event.content).content,
         platform: event.platform,
-        scheduledTime: event.scheduledTime.toISOString(),
-        generationTime: event.generationTime?.toISOString(),
-        status: event.posted ? 'posted' : (event.contentGenerated ? 'generated' : 'pending'),
+        scheduledTime: event.scheduledTime,
+        generationTime: event.generationTime,
+        status: event.posted ? 'posted' : (event.contentGenerated === 1 ? 'generated' : 'pending'),
         mediaPath: event.mediaPath,
         metadata: event.metadata
       })),
@@ -332,24 +370,25 @@ mcp.addTool({
       
       if (params.updates.name) updates.name = params.updates.name;
       if (params.updates.prompt) {
-        updates.content = { content: params.updates.prompt, mentions: [], attachments: [] };
-        updates.contentGenerated = false; // Reset generation status if prompt changes
+        updates.content = JSON.stringify({ content: params.updates.prompt, mentions: [], attachments: [] });
+        updates.contentGenerated = 0; // Reset generation status if prompt changes
       }
       if (params.updates.scheduledTime) {
         const newScheduledTime = new Date(params.updates.scheduledTime);
         if (newScheduledTime <= new Date()) {
           throw new Error('Scheduled time must be in the future');
         }
-        updates.scheduledTime = newScheduledTime;
-        updates.generationTime = calculateGenerationTime(newScheduledTime);
+        updates.scheduledTime = newScheduledTime.toISOString();
+        updates.generationTime = calculateGenerationTime(newScheduledTime).toISOString();
       }
       if (params.updates.approved !== undefined) updates.approved = params.updates.approved;
       if (params.updates.platform) updates.platform = params.updates.platform;
       
-      const [updated] = await db.update(events)
+      await db.update(events)
         .set(updates)
-        .where(eq(events.id, params.eventId))
-        .returning();
+        .where(eq(events.id, params.eventId));
+        
+      const [updated] = await db.select().from(events).where(eq(events.id, params.eventId));
       
       if (!updated) {
         return JSON.stringify({
@@ -363,7 +402,7 @@ mcp.addTool({
         event: {
           id: updated.id,
           name: updated.name,
-          scheduledTime: updated.scheduledTime.toISOString(),
+          scheduledTime: updated.scheduledTime,
           approved: updated.approved,
           platform: updated.platform
         }
@@ -441,16 +480,16 @@ mcp.addTool({
 });
 
 // Cleanup function
-process.on('SIGINT', async () => {
-  if (pgClient) {
-    await pgClient.end();
+process.on('SIGINT', () => {
+  if (sqliteDb) {
+    sqliteDb.close();
   }
   process.exit(0);
 });
 
-process.on('SIGTERM', async () => {
-  if (pgClient) {
-    await pgClient.end();
+process.on('SIGTERM', () => {
+  if (sqliteDb) {
+    sqliteDb.close();
   }
   process.exit(0);
 });
