@@ -173,6 +173,7 @@ mcp.addTool({
         agent: validatedParams.agent,
         eventType: 'scheduled',
         mediaPath: mediaPath,
+        mcpTools: JSON.stringify([]),
         contentGenerated: 0,
         approved: 0,
         posted: 0
