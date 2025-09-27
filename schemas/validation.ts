@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 // Common schemas
-export const platformSchema = z.enum(['x', 'linkedin', 'instagram', 'threads', 'bluesky']);
-export const agentSchema = z.string().default('anthropic/claude-3-opus');
+export const platformSchema = z.enum(['x', 'linkedin', 'instagram', 'threads', 'bluesky', 'reddit']);
+export const agentSchema = z.string().default('claude-sonnet-4-20250514');
 export const trackTypeSchema = z.enum(['planned']);
 export const eventTypeSchema = z.enum(['scheduled']);
 
@@ -12,11 +12,13 @@ export const isoDateTimeSchema = z.string().refine(
   { message: 'Invalid ISO 8601 datetime format' }
 );
 
-// Content schema
+// Content schema - DEPRECATED, keeping for backward compatibility
+// Now we just use a string for prompt
 export const contentSchema = z.object({
   content: z.string(),
   mentions: z.array(z.string()).default([]),
-  attachments: z.array(z.string()).default([])
+  attachments: z.array(z.string()).default([]),
+  quoteTweetUrl: z.string().optional() // URL of tweet to quote (for X/Twitter quote tweets)
 });
 
 
@@ -39,16 +41,21 @@ export const eventSchema = z.object({
   scheduledTime: z.date(),
   generationTime: z.date().optional(),
   postTime: z.date().optional(),
-  content: contentSchema,
+  prompt: z.string(), // Now using prompt string directly
   agent: agentSchema,
   contentGenerated: z.boolean().default(false),
   approved: z.boolean().default(false),
   posted: z.boolean().default(false),
-  approvalVia: z.string().default('discord'),
-  mcpTools: z.array(z.string()).default(['timeline']),
-  metadata: z.record(z.any()).optional(),
+  approvalVia: z.string().default('manual'),
+  mcpTools: z.array(z.string()).default(['timeline', 'fal', 'sqlite', 'playwright']),
+  // metadata: z.record(z.any()).optional(), // DEPRECATED - use individual fields
+  generationSessionId: z.string().nullable().optional(),
+  postingSessionId: z.string().nullable().optional(),
+  generationStartedAt: z.date().nullable().optional(),
+  approvalRequestedAt: z.date().nullable().optional(),
+  error: z.string().nullable().optional(),
+  postedUrl: z.string().nullable().optional(),
   eventType: eventTypeSchema,
-  stateFolder: z.string().optional(),
   mediaPath: z.string().optional(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional()
@@ -69,13 +76,19 @@ export const eventResponseSchema = z.object({
   trackId: z.string(),
   trackName: z.string().optional(),
   name: z.string(),
-  prompt: z.string(),
+  prompt: z.string(),  // Now using prompt field
   platform: z.string(),
-  scheduledTime: z.string(),
-  generationTime: z.string().optional(),
+  scheduledTime: z.string(),  // ISO string for API response
+  generationTime: z.string().optional(),  // ISO string for API response
   status: z.enum(['pending', 'generated', 'posted']),
   mediaPath: z.string().optional(),
-  metadata: z.record(z.any()).optional()
+  // metadata: z.record(z.any()).optional(), // DEPRECATED
+  generationSessionId: z.string().optional(),
+  postingSessionId: z.string().optional(),
+  generationStartedAt: z.string().optional(),  // ISO string for API response
+  approvalRequestedAt: z.string().optional(),  // ISO string for API response
+  error: z.string().optional(),
+  postedUrl: z.string().optional()
 });
 
 
