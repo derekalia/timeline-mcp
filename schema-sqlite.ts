@@ -71,6 +71,7 @@ export const events = sqliteTable('timeline_events', {
   approvalVia: text('approval_via'),
   mcpTools: text('mcp_tools').$defaultFn(json.defaultArray),
   eventType: text('event_type').default('scheduled'),
+  metadata: text('metadata').$defaultFn(json.defaultObject), // Platform-specific metadata (e.g., target subreddit)
 
   // File paths
   mediaPath: text('media_path'),

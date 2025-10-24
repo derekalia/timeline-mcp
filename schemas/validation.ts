@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Common schemas
 export const platformSchema = z.enum(['x', 'linkedin', 'instagram', 'threads', 'bluesky', 'reddit']);
-export const agentSchema = z.string().default('claude-sonnet-4-20250514');
+export const agentSchema = z.string().default('claude-sonnet-4-5-20250929');
 export const trackTypeSchema = z.enum(['planned']);
 export const eventTypeSchema = z.enum(['scheduled']);
 
@@ -48,7 +48,7 @@ export const eventSchema = z.object({
   posted: z.boolean().default(false),
   approvalVia: z.string().default('manual'),
   mcpTools: z.array(z.string()).default(['timeline', 'fal', 'sqlite', 'playwright']),
-  // metadata: z.record(z.any()).optional(), // DEPRECATED - use individual fields
+  metadata: z.record(z.any()).optional(), // Platform-specific metadata (e.g., target subreddit)
   generationSessionId: z.string().nullable().optional(),
   postingSessionId: z.string().nullable().optional(),
   generationStartedAt: z.date().nullable().optional(),
@@ -82,13 +82,13 @@ export const eventResponseSchema = z.object({
   generationTime: z.string().optional(),  // ISO string for API response
   status: z.enum(['pending', 'generated', 'posted']),
   mediaPath: z.string().optional(),
-  // metadata: z.record(z.any()).optional(), // DEPRECATED
-  generationSessionId: z.string().optional(),
-  postingSessionId: z.string().optional(),
+  metadata: z.record(z.any()).optional(), // Platform-specific metadata
+  generationSessionId: z.string().nullable().optional(),
+  postingSessionId: z.string().nullable().optional(),
   generationStartedAt: z.string().optional(),  // ISO string for API response
   approvalRequestedAt: z.string().optional(),  // ISO string for API response
-  error: z.string().optional(),
-  postedUrl: z.string().optional()
+  error: z.string().nullable().optional(),
+  postedUrl: z.string().nullable().optional()
 });
 
 

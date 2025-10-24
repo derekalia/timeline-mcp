@@ -119,9 +119,10 @@ const addScheduledEventParams = z.object({
   prompt: z.string().min(1, 'Prompt cannot be empty').max(5000, 'Prompt too long'),
   scheduledTime: isoDateTimeSchema,
   platform: platformSchema.default('x'),
-  agent: agentSchema.optional().default('claude-sonnet-4-20250514'),
+  agent: agentSchema.optional().default('claude-sonnet-4-5-20250929'),
   approvalVia: z.string().optional().default('manual'),
-  mcpTools: z.array(z.string()).optional().default(['timeline', 'fal', 'sqlite', 'playwright'])
+  mcpTools: z.array(z.string()).optional().default(['timeline', 'fal', 'sqlite', 'playwright']),
+  metadata: z.record(z.any()).optional().describe('Platform-specific metadata (e.g., { targetSubreddit: "subredditname" } for Reddit posts)')
 });
 
 
@@ -217,6 +218,7 @@ mcp.addTool({
         mediaPath: mediaPath,
         mcpTools: JSON.stringify(validatedParams.mcpTools),
         approvalVia: validatedParams.approvalVia,
+        metadata: JSON.stringify(validatedParams.metadata || {}), // Platform-specific metadata
         contentGenerated: false,
         approved: false,
         posted: false
@@ -235,7 +237,8 @@ mcp.addTool({
           scheduledTime: newEvent.scheduledTime,
           generationTime: newEvent.generationTime,
           mediaPath: newEvent.mediaPath,
-          platform: newEvent.platform
+          platform: newEvent.platform,
+          metadata: newEvent.metadata ? JSON.parse(newEvent.metadata) : undefined
         }
       };
       
@@ -440,15 +443,32 @@ mcp.addTool({
 // Tool: List scheduled events with enhanced filtering
 mcp.addTool({
   name: 'timeline_list_scheduled_events',
-  description: 'List scheduled events with optional filtering',
+  description: `List scheduled events with optional filtering by track, status, platform, and date range.
+
+STATUS FILTERING:
+- 'all': Returns all events regardless of status
+- 'pending': Returns events that haven't been generated yet (contentGenerated = false)
+- 'generated': Returns events that have been generated but not posted yet (contentGenerated = true, posted = false)
+- 'posted': Returns events that have been posted (posted = true)
+
+DATE FILTERING:
+- startDate/endDate use DATE ONLY comparison (time is ignored)
+- Format: YYYY-MM-DD or ISO 8601 datetime string
+- Example: startDate="2025-10-14" matches ALL events scheduled on Oct 14, regardless of time
+- To get events for a single day, use the same date for both startDate and endDate
+
+EXAMPLES:
+- Get all posted events from today: { "startDate": "2025-10-14", "endDate": "2025-10-14", "status": "posted" }
+- Get all Reddit events this week: { "platform": "reddit", "startDate": "2025-10-14", "endDate": "2025-10-20" }
+- Get pending events in a specific track: { "trackId": "track-uuid", "status": "pending" }`,
   parameters: z.object({
-    trackId: z.string().uuid().optional(),
-    status: z.enum(['all', 'pending', 'generated', 'posted']).optional().default('all'),
-    platform: platformSchema.optional(),
-    startDate: isoDateTimeSchema.optional(),
-    endDate: isoDateTimeSchema.optional(),
-    limit: z.number().int().positive().max(100).optional().default(50),
-    offset: z.number().int().nonnegative().optional().default(0)
+    trackId: z.string().uuid().optional().describe('Filter by track ID'),
+    status: z.enum(['all', 'pending', 'generated', 'posted']).optional().default('all').describe('Filter by event status'),
+    platform: platformSchema.optional().describe('Filter by platform (x, reddit, linkedin, instagram, tiktok, youtube)'),
+    startDate: isoDateTimeSchema.optional().describe('Start date for filtering (YYYY-MM-DD). Date-only comparison - time is ignored.'),
+    endDate: isoDateTimeSchema.optional().describe('End date for filtering (YYYY-MM-DD). Date-only comparison - time is ignored.'),
+    limit: z.number().int().positive().max(100).optional().default(50).describe('Maximum number of events to return'),
+    offset: z.number().int().nonnegative().optional().default(0).describe('Offset for pagination')
   }),
   execute: async (params) => {
     const db = await getDb();
@@ -482,11 +502,32 @@ mcp.addTool({
         if (params.status === 'generated' && (!event.contentGenerated || event.posted)) return false;
         if (params.status === 'pending' && event.contentGenerated) return false;
       }
-      
-      // Date filters
-      if (params.startDate && new Date(event.scheduledTime) < new Date(params.startDate)) return false;
-      if (params.endDate && new Date(event.scheduledTime) > new Date(params.endDate)) return false;
-      
+
+      // Date filters - compare dates only, not times
+      if (params.startDate) {
+        const eventDate = new Date(event.scheduledTime);
+        eventDate.setHours(0, 0, 0, 0);
+
+        // Parse the filter date in local timezone by extracting YYYY-MM-DD
+        const dateMatch = params.startDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!dateMatch) return false;
+        const startDate = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]), 0, 0, 0, 0);
+
+        if (eventDate < startDate) return false;
+      }
+
+      if (params.endDate) {
+        const eventDate = new Date(event.scheduledTime);
+        eventDate.setHours(0, 0, 0, 0);
+
+        // Parse the filter date in local timezone by extracting YYYY-MM-DD
+        const dateMatch = params.endDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!dateMatch) return false;
+        const endDate = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]), 0, 0, 0, 0);
+
+        if (eventDate > endDate) return false;
+      }
+
       return true;
     });
     
@@ -504,6 +545,7 @@ mcp.addTool({
           generationTime: parsedEvent.generationTime?.toISOString(),
           status: parsedEvent.posted ? 'posted' : (parsedEvent.contentGenerated ? 'generated' : 'pending'),
           mediaPath: parsedEvent.mediaPath,
+          metadata: parsedEvent.metadata ? JSON.parse(parsedEvent.metadata) : undefined,
           generationSessionId: parsedEvent.generationSessionId,
           postingSessionId: parsedEvent.postingSessionId,
           generationStartedAt: parsedEvent.generationStartedAt?.toISOString(),
@@ -534,7 +576,8 @@ mcp.addTool({
       prompt: z.string().min(1).max(5000).optional(),
       scheduledTime: isoDateTimeSchema.optional(),
       approved: z.boolean().optional(),
-      platform: platformSchema.optional()
+      platform: platformSchema.optional(),
+      metadata: z.record(z.any()).optional().describe('Platform-specific metadata')
     }).refine(data => Object.keys(data).length > 0, {
       message: 'At least one update field must be provided'
     })
@@ -560,7 +603,8 @@ mcp.addTool({
       }
       if (params.updates.approved !== undefined) updates.approved = params.updates.approved;
       if (params.updates.platform) updates.platform = params.updates.platform;
-      
+      if (params.updates.metadata) updates.metadata = JSON.stringify(params.updates.metadata);
+
       // Convert dates and booleans for SQLite
       const dbUpdates = prepareEventForDb(updates);
       
