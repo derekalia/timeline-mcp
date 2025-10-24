@@ -1,0 +1,17 @@
+# Source files
+*.ts
+!*.d.ts
+tsconfig.json
+
+# Development files
+.git
+.gitignore
+.DS_Store
+node_modules
+
+# Examples and docs (keep README.md)
+examples.md
+
+# Build artifacts
+*.log
+npm-debug.log*

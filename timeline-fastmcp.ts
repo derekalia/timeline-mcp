@@ -7,7 +7,7 @@ import { eq, and, asc, desc } from 'drizzle-orm';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { tracks, events, postyAccounts } from './schema-sqlite.ts';
+import { tracks, events, postyAccounts } from './schema-sqlite.js';
 import {
   platformSchema,
   agentSchema,
@@ -15,12 +15,16 @@ import {
   trackResponseSchema,
   eventResponseSchema,
   type Platform
-} from './schemas/validation.ts';
-import { toSQLiteDate, fromSQLiteDate, prepareEventForDb, parseEventFromDb } from './date-helpers.ts';
+} from './schemas/validation.js';
+import { toSQLiteDate, fromSQLiteDate, prepareEventForDb, parseEventFromDb } from './date-helpers.js';
 
 // Get workspace path
-function getWorkspacePath() {
-  return process.env.POSTY_WORKSPACE;
+function getWorkspacePath(): string {
+  const workspace = process.env.POSTY_WORKSPACE;
+  if (!workspace) {
+    throw new Error('POSTY_WORKSPACE environment variable is not set');
+  }
+  return workspace;
 }
 
 // Get SQLite database path
