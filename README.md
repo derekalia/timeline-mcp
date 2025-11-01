@@ -5,6 +5,10 @@
 
 **Model Context Protocol (MCP) server for managing scheduled social media posts and content automation.**
 
+<a href="https://glama.ai/mcp/servers/@derekalia/timeline-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@derekalia/timeline-mcp/badge" alt="Timeline Server MCP server" />
+</a>
+
 Timeline MCP enables AI assistants like Claude to manage your content calendar through natural language. Schedule posts across multiple platforms (X/Twitter, Reddit, LinkedIn, Instagram, TikTok, YouTube), organize campaigns into tracks, and automate your content workflow.
 
 ## Quick Start
